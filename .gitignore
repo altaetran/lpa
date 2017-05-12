@@ -5,6 +5,8 @@
 *.#
 *.*~
 
+./test.py
+
 # Ignore distribution files
 /dist/
 
