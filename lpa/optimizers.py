@@ -171,7 +171,9 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=True,st
     
     return err, W, A, b, loss_hist
 
-def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False,bool_woodbury=True,bool_numpy=False,bfgs=True,stochastic=True,analytic=True,verbose=True,eps=1e-3):
+def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False,
+              bool_woodbury=True,bool_numpy=False,bfgs=True,stochastic=True,analytic=True,
+              verbose=True,eps=1e-3):
     g = Mp.shape[0]
     
     best_params = None

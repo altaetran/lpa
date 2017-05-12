@@ -9,7 +9,5 @@ setup(name='lpa',
       install_requires=[
         'scipy',
         'numpy',
-      ],
-      test_suite='nose.collector',
-      tests_require=['nose']
+      ]
 )
