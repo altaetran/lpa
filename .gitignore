@@ -1,0 +1,9 @@
+# Ignore compiled python files
+*.pyc
+
+# Ignore distribution files
+/dist/
+
+# Ignore egg emtadata 
+/*.egg-info
+/*.egg
