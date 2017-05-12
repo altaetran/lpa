@@ -153,3 +153,9 @@ def T_err_fun(W,A,Mr,Mp):
     A_Z = A.dot(Z_ast_var)
     E_var = W.dot(right_I_m_proj(A_Z,n)+right_proj(Y_var,n)) - Mp
     return nnp.sum(np.square(E_var))/n
+
+def numerical_dag_loss_grad(O,A_s,dag_weights,kappa):
+    f = T_dag(O,A_s,dag_weights,kappa)
+    
+    G = der(lambda O:T_dag(O,A_s,dag_weights,kappa), O, h=1e-8)
+    return f, G
