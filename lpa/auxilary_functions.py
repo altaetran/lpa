@@ -1,4 +1,7 @@
 import numpy as np
+import numpy.matlib
+
+# TODO: right_proj and left_proj when computing E could be sped up by using broadcasting instead of tile
 
 def s_to_ast(B,r,a,b):
     """ 
@@ -70,7 +73,7 @@ def Pi(A,B,m):
     proj_j = np.sum(B,axis=1)
     
     return proj_i[:,np.newaxis]*proj_j[np.newaxis,:]/m
-
+"""
 def right_proj(A,m):
     return np.matlib.repmat(np.sum(A, axis=1, keepdims=True)/m,1,m)
 
@@ -79,6 +82,19 @@ def right_I_m_proj(A,m):
 
 def left_proj(A,m):
     return np.matlib.repmat(np.sum(A, axis=0, keepdims=True)/m,m,1)
+
+def left_I_m_proj(A,m):
+    return A - left_proj(A,m)
+
+"""
+def right_proj(A,m):
+    return np.tile(np.sum(A, axis=1, keepdims=True)/m,[1,m])
+
+def right_I_m_proj(A,m):
+    return A - right_proj(A,m)
+
+def left_proj(A,m):
+    return np.tile(np.sum(A, axis=0, keepdims=True)/m,[m,1])
 
 def left_I_m_proj(A,m):
     return A - left_proj(A,m)
@@ -93,7 +109,6 @@ def der(func, W, h=1e-8):
     W     : (numpy matrix) of the variable argument of the function to be differentiated
     h     : (float64) containing the finite difference value to be used for finite differences
     """
-
     der_mat = np.zeros(W.shape) # Storage for matrix gradient
    
     # Iterate through all elements of the matrix

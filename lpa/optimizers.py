@@ -1,4 +1,9 @@
 import numpy as np
+import scipy.linalg
+import sys
+from initializers import generate_W_init
+from lpa_functions import T_fun, T_err_fun, analytic_loss_grad, numerical_dag_loss_grad, get_A_b
+from lpa_functions import T_dag, T_dag_err, numerical_dag_loss_grad
 
 def Y_tau(W,tau,A):
     g = W.shape[0]
@@ -33,8 +38,23 @@ def Y_tau_woodbury(W,tau,U,V):
     
     return Y_tau
 
+def Y_W_tau(W,tau,A):
+    """
+    Descent path as a function of tau
+
+    """
+    Yt = Y_tau(W,tau,A)
+    return W - 0.5*tau*A.dot(W+Yt)
+
+def Y_W_tau_woodbury(W,tau,U,V):
+    """
+    Descernt path as a function of tau, using woodbury matrix inversion for speed
+    """
+    Yt = Y_tau_woodbury(W,tau,U,V)
+    return W - 0.5*tau*U.dot(V.dot(W+Yt))
+
 def armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury=True):
-    tau_init = 1
+    tau_init = 1.0
     rho_1 = 1e-3
     rho_2 = 0.9
     alpha = 0.7
@@ -81,10 +101,7 @@ def armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbur
     
     return f_tau, Yt, d_tau
 
-def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=True,stochastic=True,analytic=True,verbose=True,eps=1e-3):
-    bool_bfgs_inv = True
-    if verbose:
-        print('Numpy Version')
+def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,analytic=True,verbose=True,eps=1e-3):
     batch_size = 20
     n = Mp.shape[1]
     m = Mp.shape[0]
@@ -122,11 +139,7 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=True,st
                 G = np.linalg.solve(B, G_old)
             G = np.reshape(G, [m,p])
         
-        if stochastic:
-            c = np.random.choice(n,batch_size)
-            f, Yt, d_tau = armijo_wolfe_backtracking_line_search_woodbury(W,Mr[:,:,c],Mp[:,c],lam,mu,G,bool_woodbury)
-        else:
-            f, Yt, d_tau = armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury)
+        f, Yt, d_tau = armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury)
 
         loss_hist.append(f)
         W_old = W
@@ -161,8 +174,8 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=True,st
                 B += y.dot(y.T)/y.T.dot(s)-Bs.dot(Bs.T)/(s.T.dot(Bs))
             G_old = G_new
             
-        if (i % 10 == 0 or not bool_not_converged) and verbose:
-            print(i,loss_hist[-1])
+        if (i % 100 == 0 or not bool_not_converged) and verbose:
+            sys.stdout.write('Iteration: '+str(i).rjust(6)+' | loss '+str(np.round(loss_hist[-1],3))+'\n')
         i += 1
 
     A, b = get_A_b(W,Mr,Mp,lam)
@@ -172,7 +185,7 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=True,st
     return err, W, A, b, loss_hist
 
 def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False,
-              bool_woodbury=True,bool_numpy=False,bfgs=True,stochastic=True,analytic=True,
+              bool_woodbury=True,bool_numpy=False,bfgs=False,analytic=True,
               verbose=True,eps=1e-3):
     g = Mp.shape[0]
     
@@ -180,14 +193,14 @@ def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False
     best_loss = 1e64
     for i in range(n_trials):
         if verbose:
-            print('>> Beginning seed: '+str(i))
+            sys.stdout.write('>> Beginning seed: '+str(i)+'\n')
         W = generate_W_init(g,p)
         if not bool_coordinate_wise:
-            err, W, A, b, loss_hist = solve_one_numpy(W,Mr,Mp,lam,mu,max_iter,bool_woodbury,bfgs,stochastic,analytic,verbose=verbose,eps=eps)
+            err, W, A, b, loss_hist = solve_one_numpy(W,Mr,Mp,lam,mu,max_iter,bool_woodbury,bfgs,analytic,verbose=verbose,eps=eps)
         else:
             r = Mr.shape[0]
             A = np.random.randn(p,r*p)
-            err, W, A, b, loss_hist = solve_one_A_numpy(W,A,Mr,Mp,lam,mu,max_iter,bool_woodbury,stochastic)
+            err, W, A, b, loss_hist = solve_one_A_numpy(W,A,Mr,Mp,lam,mu,max_iter,bool_woodbury)
         
         if loss_hist[-1] < best_loss:
             best_loss = loss_hist[-1]
@@ -235,7 +248,9 @@ def dag_linesearch(O,A_s,dag_weights,kappa,G,bool_woodbury=True):
 
     return f_tau, Yt, d_tau
 
-def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,stochastic=True,analytic=True,verbose=True):   
+def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False,verbose=True):   
+    r = A_s.shape[0]
+    p = A_s.shape[1]
     loss_hist = []
     
     f = T_dag(O,A_s,dag_weights,kappa)
@@ -267,7 +282,7 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,stochastic=Tru
             f, G = numerical_dag_loss_grad(O,A_s,dag_weights,kappa)
             
         if (i % 100 == 0 or not bool_not_converged) and verbose:
-            print(i,loss_hist[-1])
+            sys.stdout.write('Iteration: '+str(i).rjust(6)+' | loss '+str(np.round(loss_hist[-1],3))+'\n')
         i += 1
 
     W = W.dot(O.T)
@@ -279,16 +294,16 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,stochastic=Tru
     
     return err, W, A, b, loss_hist
 
-def solve_dag(W,A,b,p,dag_weights,kappa,n_trials=10,max_iter=10000,analytic=True,verbose=True):
+def solve_dag(W,A,b,p,dag_weights,kappa,n_trials=10,max_iter=10000,analytic=False,verbose=True):
     p = A.shape[0]
     r = A.shape[1]/p
     A_s = np.reshape(A.T, [r,p,p]).transpose([0,2,1])
     
     best_params = None
-    best_loss = 9999999999999
+    best_loss = 1e64
     for i in range(n_trials):
         if verbose:
-            print('>> Beginning seed: '+str(i))
+            sys.stdout.write('>> Beginning seed: '+str(i)+'\n')
         O = generate_W_init(p,p)
         err, W, A, b, loss_hist = solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=max_iter,analytic=analytic,verbose=verbose)
 

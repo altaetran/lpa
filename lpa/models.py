@@ -4,24 +4,27 @@ from optimizers import solve_lpa, solve_dag
 from utility import extract_timeseries_XY
 
 class LPA(object):
-    def __init__(self, n_components, basis='causal', selection_strength=0, n_seed=5, max_iter=1000, tol=1e-3,
-                 forward_backward=False,
+    def __init__(self, n_components, lag_order=1, basis='causal', selection_strength=0, n_seed=5, max_iter=1000, tol=1e-3,
+                 forward_backward=False,store_unstructured=False,
                  verbose=False,
                  ):
         """        
         args:
         -----
         n_components : (int, float) Number of components to keep
-        basis :
+        lag_order : (int) Number of time lags to be used for each step of prediction
+        basis : (string) Basis type for the underlying subspace
         selection_strength : (int, float) Strength of feature selection
         n_seed : (int) Number of restarts to try when optimizing
         max_iter : (int) Maximum number of iterations to use for optimizing each seed
         tol : (float) Minimum change in loss function to be considered converged
         forward_backward : (bool) If dataset should be fit both forward in time and backward
+        store_unstructured : (bool) if unstructured basis/solution should be store regardless of basis
         verbose : (bool) Whether or not to print extra outputs 
         """
 
         self.p = n_components
+        self.r = lag_order
         self.basis = basis
         self.mu = selection_strength
         self.lam = 0 # Depricated
@@ -29,6 +32,7 @@ class LPA(object):
         self.max_iter = max_iter
         self.tol = tol
         self.forward_backward = forward_backward
+        self.store_unstructured = store_unstructured
         self.verbose = verbose
         self.is_fit = False
 
@@ -54,9 +58,23 @@ class LPA(object):
         None
         """
         
+        if self.verbose:
+            sys.stdout.write('>>Extracting data from time series\n')
+
         Xr, Xp = extract_timeseries_XY(X,self.r,self.forward_backward)
-        self.__fit(Xr,Xp)               
-        self.__rotate_basis(self,self.basis)
+
+        if self.verbose:
+            sys.stdout.write('>>Identifying Latent Processes\n')
+
+        self.__fit(Xr,Xp)
+
+        if self.verbose:
+            if self.basis == 'unstructured':
+                sys.stdout.write('>>Leaving basis unstructured\n')
+            elif self.basis == 'causal':
+                sys.stdout.write('>>Rotating into causal basis\n')
+
+        self.__rotate_basis(self.basis)
 
     def __fit(self,X,Y):
         """
@@ -70,9 +88,15 @@ class LPA(object):
                                             verbose=self.verbose)
 
         # Save model parameters
-        self._W = W
-        self._A = A
-        self._b = b
+        self.W = W
+        self.A = A
+        self.b = b
+
+        if self.store_unstructured:
+            self._W = np.copy(W)
+            self._A = np.copy(A)
+            self._b = np.copy(b)
+
         self.err = err
 
         self.is_fit = True
@@ -80,24 +104,24 @@ class LPA(object):
     def __rotate_basis(self,basis):
         # Rotate into appropriate basis
         if self.basis == 'unstructured':
-            if self.verbose:
-                sys.stdout.write('>>Leaving basis unstructured')
-            self.W = self._W
-            self.A = self._A
-            self.b = self._b
+            pass
 
         elif self.basis == 'causal':
-            if self.verbose:
-                sys.stdout.write('>>Rotating into causal basis')
-
             kappa = self.basis_kwargs['kappa']
             n_trials = self.basis_kwargs['n_trials']
             max_iter = self.basis_kwargs['max_iter']
 
             dag_weights = 1./(self.p-np.arange(self.p))  # Create dag weights
-            err_cs, W_cs, A_cs, b_cs, loss_hist_cs = solve_dag(self._W,self._A, self._b,self.p,kappa,
-                                                               n_trials=n_trials,max_iter=max_iter,verbose=False)
             
+            # Solve for dag structure using the weights
+            err_cs, W_cs, A_cs, b_cs, loss_hist_cs = solve_dag(self.W,self.A, self.b,self.p,
+                                                               dag_weights,kappa=kappa,n_trials=n_trials,
+                                                               max_iter=max_iter,verbose=self.verbose)
+
+            self.W = W_cs
+            self.A = A_cs
+            self.b = b_cs
+
     def get_components(self):
         assert self.is_fit, 'Need to fit model before accessing components'
         return self.W

@@ -152,7 +152,57 @@ def T_err_fun(W,A,Mr,Mp):
     Y_var = W.T.dot(Mp)
     A_Z = A.dot(Z_ast_var)
     E_var = W.dot(right_I_m_proj(A_Z,n)+right_proj(Y_var,n)) - Mp
-    return nnp.sum(np.square(E_var))/n
+    return np.sum(np.square(E_var))/n
+
+def get_A_b(W,Mr,Mp,lam):
+    """
+    Get the average variance of the latent model
+    Args:
+    -----
+    W    : (numpy array (m,p)) containing the orthonormal basis for the subspace
+    Mr   : (numpy array (r,m,n)) containing the lagged data points in order Mr[0],..,Mr[r-1]
+    Mp   : (numpy array (m,n)) containing the future points to be predicted
+    lam  : (float) L2 regularization term for A to dampen signal uniformly
+    
+    Returns:
+    --------
+    A    : (numpy array (p,r*p)) Autoregression coefficients
+    b    : (numpy array (p)) Autoregression drift term
+    """
+    m = Mp.shape[1]
+    n = Mr.shape[2]
+    r = Mr.shape[0]
+    p = W.shape[1]
+    
+    # Transform variables
+    Z_ast_var = np.vstack([W.T.dot(Mr[i]) for i in range(r)])
+    Y_var = W.T.dot(Mp)
+
+    # Get autocovariance
+    Gamma_var = I_m_Pi(Z_ast_var,Z_ast_var,n) + np.eye(r*p)*lam
+    V_var = I_m_Pi(Y_var,Z_ast_var,n)
+
+    # Invert to get true values
+    A = np.linalg.solve(Gamma_var,V_var.T).T    
+    b = np.sum(Y_var-A.dot(Z_ast_var),axis=1)/n
+    
+    return A, b
+
+def T_dag(O,A_s,dag_weights,kappa):
+    A_rot_s = np.matmul(np.matmul(O[np.newaxis,:,:],A_s), O.T[np.newaxis,:,:])
+    # Penalize lower triangular
+    tril = np.multiply(np.triu(A_rot_s,1),dag_weights[np.newaxis,:,np.newaxis])
+    norms = np.sqrt(np.sum(np.square(tril), axis=0))
+    loss = 1e4*(np.sum(norms)+kappa*np.sum(np.abs(O)))
+    return loss
+
+def T_dag_err(O,A_s,dag_weights):
+    A_rot_s = np.matmul(np.matmul(O[np.newaxis,:,:],A_s), O.T[np.newaxis,:,:])
+    # Penalize lower triangular
+    tril = np.multiply(np.triu(A_rot_s,1),dag_weights[:,np.newaxis])
+    norms = np.sqrt(np.sum(np.square(tril), axis=0))
+    loss = 1e4*(np.sum(norms))
+    return loss
 
 def numerical_dag_loss_grad(O,A_s,dag_weights,kappa):
     f = T_dag(O,A_s,dag_weights,kappa)

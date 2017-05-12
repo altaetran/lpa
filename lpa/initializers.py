@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.linalg
 
 def generate_W_init(m,p):
     """
