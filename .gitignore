@@ -1,5 +1,9 @@
 # Ignore compiled python files
 *.pyc
+*.py~
+*.py#
+*.#
+*.*~
 
 # Ignore distribution files
 /dist/
