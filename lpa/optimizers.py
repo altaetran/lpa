@@ -3,7 +3,7 @@ import scipy.linalg
 import sys
 from initializers import generate_W_init
 from lpa_functions import T_fun, T_err_fun, analytic_loss_grad, numerical_dag_loss_grad, get_A_b
-from lpa_functions import T_dag, T_dag_err, numerical_dag_loss_grad
+from lpa_functions import T_dag, T_dag_err, numerical_dag_loss_grad, analytic_dag_loss_grad
 
 def Y_tau(W,tau,A):
     g = W.shape[0]
@@ -208,7 +208,7 @@ def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False
     
     return best_params
 
-def dag_linesearch(O,A_s,dag_weights,kappa,G,bool_woodbury=True):
+def dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=True):
     tau_init = 1
     rho_1 = 1e-3
     rho_2 = 0.9
@@ -224,8 +224,8 @@ def dag_linesearch(O,A_s,dag_weights,kappa,G,bool_woodbury=True):
     def T_loss_path(tau):
         h = 1e-12
         Yt = Y_W_tau(O,tau,A)
-        f = T_dag(Yt,A_s,dag_weights,kappa)
-        d = (T_dag(Y_W_tau(O,tau+h,A),A_s,dag_weights,kappa)-f)/h
+        f = T_dag(Yt,W,A_s,dag_weights,kappa)
+        d = (T_dag(Y_W_tau(O,tau+h,A),W,A_s,dag_weights,kappa)-f)/h
         return f, d, Yt
     
     f, d, Yt = T_loss_path(0)
@@ -253,7 +253,7 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False
     p = A_s.shape[1]
     loss_hist = []
     
-    f = T_dag(O,A_s,dag_weights,kappa)
+    f = T_dag(O,W,A_s,dag_weights,kappa)
     loss_hist.append(f)
 
     min_eps = 1e-7
@@ -262,12 +262,12 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False
     i = 0
 
     if analytic:
-        f, G = analytic_dag_loss_grad(O,A_s,dag_weights,kappa)
+        f, G = analytic_dag_loss_grad(O,W,A_s,dag_weights,kappa)
     else:
-        f, G = numerical_dag_loss_grad(O,A_s,dag_weights,kappa)
+        f, G = numerical_dag_loss_grad(O,W,A_s,dag_weights,kappa)
         
     while bool_not_converged:    
-        f, Yt, d_tau = dag_linesearch(O,A_s,dag_weights,kappa,G,bool_woodbury=False)
+        f, Yt, d_tau = dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=False)
         loss_hist.append(f/1e4)
         O_old = O
         O = Yt
@@ -277,9 +277,9 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False
             bool_not_converged = False
 
         if analytic:
-            f, G = analytic_dag_loss_grad(O,A_s,dag_weights,kappa)
+            f, G = analytic_dag_loss_grad(O,W,A_s,dag_weights,kappa)
         else:
-            f, G = numerical_dag_loss_grad(O,A_s,dag_weights,kappa)
+            f, G = numerical_dag_loss_grad(O,W,A_s,dag_weights,kappa)
             
         if (i % 100 == 0 or not bool_not_converged) and verbose:
             sys.stdout.write('Iteration: '+str(i).rjust(6)+' | loss '+str(np.round(loss_hist[-1],3))+'\n')
@@ -290,11 +290,11 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False
     A = np.reshape(np.transpose(A_rot_s, [0,2,1]), [r*p,p]).T
     b = O.dot(b)
     
-    err = T_dag_err(O,A_s,dag_weights)
+    err = T_dag_err(O,W,A_s,dag_weights)
     
     return err, W, A, b, loss_hist
 
-def solve_dag(W,A,b,p,dag_weights,kappa,n_trials=10,max_iter=10000,analytic=False,verbose=True):
+def solve_dag(W,A,b,p,dag_weights,kappa,n_trials=10,max_iter=10000,analytic=True,verbose=True):
     p = A.shape[0]
     r = A.shape[1]/p
     A_s = np.reshape(A.T, [r,p,p]).transpose([0,2,1])

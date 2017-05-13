@@ -154,17 +154,18 @@ def T_err_fun(W,A,Mr,Mp):
     E_var = W.dot(right_I_m_proj(A_Z,n)+right_proj(Y_var,n)) - Mp
     return np.sum(np.square(E_var))/n
 
-def get_A_b(W,Mr,Mp,lam):
+def get_A_b(W,Mr,Mp,lam=0.0):
     """
     Get the average variance of the latent model
-    Args:
+
+    args:
     -----
     W    : (numpy array (m,p)) containing the orthonormal basis for the subspace
     Mr   : (numpy array (r,m,n)) containing the lagged data points in order Mr[0],..,Mr[r-1]
     Mp   : (numpy array (m,n)) containing the future points to be predicted
     lam  : (float) L2 regularization term for A to dampen signal uniformly
     
-    Returns:
+    returns:
     --------
     A    : (numpy array (p,r*p)) Autoregression coefficients
     b    : (numpy array (p)) Autoregression drift term
@@ -179,7 +180,7 @@ def get_A_b(W,Mr,Mp,lam):
     Y_var = W.T.dot(Mp)
 
     # Get autocovariance
-    Gamma_var = I_m_Pi(Z_ast_var,Z_ast_var,n) + np.eye(r*p)*lam
+    Gamma_var = I_m_Pi(Z_ast_var,Z_ast_var,n) + np.eye(r*p)*(lam+1e-6)
     V_var = I_m_Pi(Y_var,Z_ast_var,n)
 
     # Invert to get true values
@@ -188,24 +189,128 @@ def get_A_b(W,Mr,Mp,lam):
     
     return A, b
 
-def T_dag(O,A_s,dag_weights,kappa):
-    A_rot_s = np.matmul(np.matmul(O[np.newaxis,:,:],A_s), O.T[np.newaxis,:,:])
-    # Penalize lower triangular
-    tril = np.multiply(np.triu(A_rot_s,1),dag_weights[np.newaxis,:,np.newaxis])
-    norms = np.sqrt(np.sum(np.square(tril), axis=0))
-    loss = 1e4*(np.sum(norms)+kappa*np.sum(np.abs(O)))
-    return loss
+def T_dag(O,W,A_s,C,kappa):
+    p = O.shape[0]
 
-def T_dag_err(O,A_s,dag_weights):
-    A_rot_s = np.matmul(np.matmul(O[np.newaxis,:,:],A_s), O.T[np.newaxis,:,:])
-    # Penalize lower triangular
-    tril = np.multiply(np.triu(A_rot_s,1),dag_weights[:,np.newaxis])
-    norms = np.sqrt(np.sum(np.square(tril), axis=0))
-    loss = 1e4*(np.sum(norms))
-    return loss
-
-def numerical_dag_loss_grad(O,A_s,dag_weights,kappa):
-    f = T_dag(O,A_s,dag_weights,kappa)
+    # Perform rotation in the space
+    OA = np.matmul(O[np.newaxis,:,:],A_s)
+    OAOT = np.matmul(OA, O.T[np.newaxis,:,:])
     
-    G = der(lambda O:T_dag(O,A_s,dag_weights,kappa), O, h=1e-8)
+    # Norms across time
+    K = np.sqrt(np.sum(np.square(OAOT), axis=0))
+    err = np.sum(K*C)
+    
+    # Reverse transform basis
+    WOT = W.dot(O.T)
+    reg = kappa*np.sum(np.abs(WOT))
+    
+    loss = 1e4*(err+reg)  #Add 1e4 mult for stability
+    
+    return loss
+
+def T_dag_err(O,W,A_s,C):
+    p = O.shape[0]
+
+    # Perform rotation in the space
+    OA = np.matmul(O[np.newaxis,:,:],A_s)
+    OAOT = np.matmul(OA, O.T[np.newaxis,:,:])
+    
+    # Norms across time
+    K = np.sqrt(np.sum(np.square(OAOT), axis=0))
+    err = np.sum(K*C)
+    
+    return err
+
+def numerical_dag_loss_grad(O,W,A_s,C,kappa):
+    f = T_dag(O,W,A_s,C,kappa)
+    
+    G = der(lambda O:T_dag(O,W,A_s,C,kappa), O, h=1e-8)
     return f, G
+
+def analytic_dag_loss_grad(O,W,A_s,C,kappa):
+    p = O.shape[0]
+
+    # Perform rotation in the space
+    OA = np.matmul(O[np.newaxis,:,:],A_s)
+    OAOT = np.matmul(OA, O.T[np.newaxis,:,:])
+    
+    # Norms across time
+    K = np.sqrt(np.sum(np.square(OAOT), axis=0))
+    err = np.sum(K*C)
+    
+    # Reverse transform basis
+    WOT = W.dot(O.T)
+    reg = kappa*np.sum(np.abs(WOT))
+    
+    loss = 1e4*(err+reg)
+    
+    # Get gradient of error term with respect to O
+    Ktilde = 1./(K+1e-6)
+    OAT = np.matmul(O[np.newaxis,:,:],np.transpose(A_s,[0,2,1]))
+    CKtOAOT = (C*Ktilde)[np.newaxis,:,:]*OAOT
+    CKtOAOT_T = np.transpose(CKtOAOT,[0,2,1])
+    
+    G_err = np.sum(np.matmul(CKtOAOT,OAT) + np.matmul(CKtOAOT_T,OA), axis=0)
+    
+    # Get gradient of reg function
+    S = ((WOT>=0)+0)-(WOT<0)+0  # Sign matrix
+    G_reg = kappa*S.T.dot(W)
+    
+    G = G_err + G_reg
+    G*= 1e4  # Add 1e4 mult for stability
+    return loss, G
+
+def predict_latent(X,W):
+    return W.T.dot(X)
+
+def predict_future_step(Xr,W,A,b):
+    # Get transformed variables
+    Z_ast = np.vstack([W.T.dot(Xr[i]) for i in range(r)])
+    
+    # Apply dynamics and transform back to original space
+    X_pred = W.dot(A.dot(Z_ast)+b)
+    return X_pred
+
+def get_traj(W,A,b,r,M_init,T,T_start=-1,dt=1):
+    """
+    Predicts an error free trajectory using the latent process analaysis/autoregression model
+    
+    args:
+    -----
+    W    : (numpy array (m,p)) containing the orthonormal basis for the subspace
+    Mr   : (numpy array (r,m,n)) containing the lagged data points in order Mr[0],..,Mr[r-1]
+    Mp   : (numpy array (m,n)) containing the future points to be predicted
+    r    : (int) lag order of the LPA model
+    M_init : (numpy array (r,m,1)) Initial r consecutive states for trajectory determination
+    T    : (float) Final time to integrate to
+    T_start : (float) Starting time (the time of the last element in M_init
+    dt   : (float) the step size of the integration
+    
+    returns:
+    --------
+    times : (numpy array) of the times of the trajectory
+    Xp    : (numpy array) predicted trajectory over time
+    X_lat : (numpy array) The latent states of the predicted trajectory
+    
+    if T_start == -1:
+        T_start = r
+        
+    all_h = []
+    all_obs = []
+    times = np.arange(T_start,T+dt,dt)
+
+    p = W.shape[1]
+    h = np.reshape(np.matmul(W.T[np.newaxis,:,:],M_init), [r*p,1])
+    all_h.append(h[-p:,:])
+    all_obs.append(M_init[-1,:,:])
+    for t in times[1:]:
+        h_new = A.dot(h)+b[:,np.newaxis]
+        obs = W.dot(h_new)
+        h = np.vstack([h[p:,:], h_new[:,:]])
+        
+        all_h.append(h_new)
+        all_obs.append(obs)
+        
+    return times, np.hstack(all_obs), np.hstack(all_h)
+
+
