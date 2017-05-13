@@ -4,6 +4,9 @@
 *.py#
 *.#*
 *.*~
+*.ipynb
+./datasets/finance/finance_adj_close.csv
+./datasets/finance/finance_sectors.csv
 
 ./test.py
 

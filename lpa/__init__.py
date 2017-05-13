@@ -3,4 +3,5 @@ from __future__ import division
 from __future__ import unicode_literals
 
 from .models import LPA
+from .models import VAR
 

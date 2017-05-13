@@ -4,11 +4,12 @@ import sys
 from initializers import generate_W_init
 from lpa_functions import T_fun, T_err_fun, analytic_loss_grad, numerical_dag_loss_grad, get_A_b
 from lpa_functions import T_dag, T_dag_err, numerical_dag_loss_grad, analytic_dag_loss_grad
+from lpa_functions import analytic_loss_grad_fast
 
 def Y_tau(W,tau,A):
     g = W.shape[0]
     
-    inv = np.linalg.inv(np.eye(g)+tau/2*A)
+    inv = scipy.linalg.inv(np.eye(g)+tau/2*A)
     
     minus = np.eye(g)-tau/2*A
     
@@ -53,11 +54,9 @@ def Y_W_tau_woodbury(W,tau,U,V):
     Yt = Y_tau_woodbury(W,tau,U,V)
     return W - 0.5*tau*U.dot(V.dot(W+Yt))
 
-def armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury=True):
-    tau_init = 1.0
+def armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury=True,tau_init=1.0,alpha=0.25,recurse=True):
     rho_1 = 1e-3
     rho_2 = 0.9
-    alpha = 0.7
     
     tau = tau_init
     
@@ -83,7 +82,7 @@ def armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbur
     f, d, Yt = T_loss_path(0)
     
     i = 0
-    max_iter = 100
+    max_iter = 20
     
     while bool_not_converged:
         # Get function value, derivative, and Yt at specific tau
@@ -98,10 +97,14 @@ def armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbur
             
         tau *= alpha
         i += 1
-    
-    return f_tau, Yt, d_tau
 
-def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,analytic=True,verbose=True,eps=1e-3):
+    if i >= max_iter and recurse:
+        # Restart with tau = 1.0 to definitely decide if we have converged
+        return armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury=True,tau_init=1.0,alpha=alpha,recurse=False)
+    
+    return f_tau, Yt, d_tau, tau
+
+def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,analytic=True,verbose=True,eps=1e-3,approximate=False):
     batch_size = 20
     n = Mp.shape[1]
     m = Mp.shape[0]
@@ -109,6 +112,7 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,a
     p = W.shape[1]
     
     loss_hist = []
+    tau_hist = np.zeros([max_iter,])
     
     f = T_fun(W,Mr,Mp,lam,mu)
     loss_hist.append(f)
@@ -125,35 +129,54 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,a
     i = 0
 
     if analytic:
-        f, G = analytic_loss_grad(W,Mr,Mp,lam,mu)
+        if approximate:
+            f, G = analytic_loss_grad_fast(W,Mr,Mp,lam,mu)
+        else:
+            f, G = analytic_loss_grad(W,Mr,Mp,lam,mu)
     else:
         f, G = numerical_loss_grad(W,Mr,Mp,lam,mu)
         
     G_old = np.reshape(G, [m*p,1])
+
+    alpha = 0.33  # Backtracking line search factor
+
     while bool_not_converged:    
         if bfgs:
-            #G = B.dot(G_old)
             if bfgs_inv:
                 G = Binv.dot(G_old)
             else:
                 G = np.linalg.solve(B, G_old)
             G = np.reshape(G, [m,p])
+                    
+        # Determine initial tau using previous history
+        if i <= 5:
+            tau_init = 1.0
+        else:
+            # Use median, but allow us to restore to larger values in case function curvature changes            
+            if i % 10 == 0:
+                tau_init = 1.0
+            else:
+                tau_init = np.max(tau_hist[i-5-1:i-1])
+            
+        # Find optimal step size and take the step
+        f, Yt, d_tau, tau = armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury,tau_init=tau_init,alpha=alpha)
         
-        f, Yt, d_tau = armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury)
+        # Save the final tau determined through the method
+        tau_hist[i] = tau
 
         loss_hist.append(f)
         W_old = W
         W = Yt
-
-        # Get nabla f
-        #DelF = G-W.dot(G.T.dot(W))
         
         loss_diff = loss_hist[-2] - loss_hist[-1]
         if (loss_diff < min_eps and loss_diff >= -1e-8) or i >= max_iter:
             bool_not_converged = False
 
         if analytic:
-            f, G = analytic_loss_grad(W,Mr,Mp,lam,mu)
+            if approximate:
+                f, G = analytic_loss_grad_fast(W,Mr,Mp,lam,mu)
+            else:
+                f, G = analytic_loss_grad(W,Mr,Mp,lam,mu)
         else:
             f, G = numerical_loss_grad(W,Mr,Mp,lam,mu)
             
@@ -186,7 +209,7 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,a
 
 def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False,
               bool_woodbury=True,bool_numpy=False,bfgs=False,analytic=True,
-              verbose=True,eps=1e-3):
+              verbose=True,approximate=False,eps=1e-3):
     g = Mp.shape[0]
     
     best_params = None
@@ -196,7 +219,7 @@ def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False
             sys.stdout.write('>> Beginning seed: '+str(i)+'\n')
         W = generate_W_init(g,p)
         if not bool_coordinate_wise:
-            err, W, A, b, loss_hist = solve_one_numpy(W,Mr,Mp,lam,mu,max_iter,bool_woodbury,bfgs,analytic,verbose=verbose,eps=eps)
+            err, W, A, b, loss_hist = solve_one_numpy(W,Mr,Mp,lam,mu,max_iter,bool_woodbury,bfgs,analytic,verbose=verbose,eps=eps,approximate=approximate)
         else:
             r = Mr.shape[0]
             A = np.random.randn(p,r*p)
@@ -256,7 +279,7 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False
     f = T_dag(O,W,A_s,dag_weights,kappa)
     loss_hist.append(f)
 
-    min_eps = 1e-7
+    min_eps = 1e-4
     
     bool_not_converged = True
     i = 0
