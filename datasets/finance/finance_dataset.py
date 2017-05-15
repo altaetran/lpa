@@ -29,8 +29,8 @@ def get_dataset(filter_length=126):
                     avail_stocks[symbol] = line[1]
                     stock_sectors[symbol] = (line[6],line[7])
             counter += 1
-
-        print len(avail_stocks)
+            
+        print('Number of companies: '+str(len(avail_stocks)))
 
     if not os.path.isfile(close_file):
         symbols, names = np.array(list(avail_stocks.items())).T
@@ -39,8 +39,6 @@ def get_dataset(filter_length=126):
         used_symbols = []
         counter = 0
         for symbol in symbols:
-            if counter % 10 == 0:
-                print counter
             try:
                 quotes.append(pdr.get_data_yahoo(symbol,start=d1,end=d2))
                 used_symbols.append(symbol)
@@ -87,13 +85,27 @@ def get_dataset(filter_length=126):
     X = np.log2(X)    
     ewma = np.vstack([pandas.stats.moments.ewma(X[i,:],halflife=filter_length) 
                       for i in range(X.shape[0])])
+    
+    print('Extracted '+str(X.shape[0])+' companies for analysis')
+    
     X -= ewma
+    m = X.shape[0]
+
+    d = X[:,5:]-X[:,:-5]
+    #rng = np.percentile(X,0.995,axis=1) - np.percentile(X,0.005,axis=1)
+    
+    keep_idx = np.max(np.abs(d),axis=1)<3
+
+    valid_sectors = [valid_sectors[i] for i in range(m) if keep_idx[i]]
+    X = X[keep_idx,:]
+
+    print('Extracted '+str(X.shape[0])+' companies for further analysis')
 
     times = range(X.shape[1])
 
     n = X.shape[1]
-    n_train = int(n*0.8) 
-    n_val = int(n*0.1) 
+    n_train = int(n*0.9) 
+    n_val = int(n*0.05) 
     n_test = n-n_train-n_val
 
     X_train = X[:,:n_train]
@@ -103,5 +115,5 @@ def get_dataset(filter_length=126):
     X_test = X[:,n_train+n_val:]
     T_test = times[n_train+n_val:]
 
-    return T_train,X_train,T_val,X_val,T_test,X_test
+    return T_train,X_train,T_val,X_val,T_test,X_test,valid_sectors
         

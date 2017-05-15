@@ -1,8 +1,8 @@
 import numpy as np
 import sys
 from optimizers import solve_lpa, solve_dag
-from utility import extract_timeseries_XY
-from lpa_functions import predict_latent, get_A_b, _predict_future_step, predict_traj
+from utility import extract_timeseries_XY, extract_initial
+from lpa_functions import predict_latent, get_A_b, _predict_future_step, _predict_traj
 from auxilary_functions import star_to_s
 
 class VAR(object):
@@ -18,7 +18,7 @@ class VAR(object):
         forward_backward : (bool) If dataset should be fit both forward in time and backward
         """
         self._r = lag_order
-        self._verbose = True
+        self._verbose = verbose
         self._forward_backward = forward_backward
         self._is_fit = False
         self._max_rp = 10000
@@ -41,7 +41,7 @@ class VAR(object):
                     
         m = X.shape[0]
         
-        assert m*self._r < 10000, "The largest matrix inversion supported for the standard solver is 10000 x 10000."
+        assert m*self._r < 15000, "The largest matrix inversion supported for the standard solver is 15000 x 15000."
         "Please reduce the number of lags, or the dimension of the input features if possible."
         "Contact for additional solutions, such as distributed options, or conjugate solvers if desired."
         
@@ -52,7 +52,7 @@ class VAR(object):
         Xr, Xp = extract_timeseries_XY(X,self._r,self._forward_backward)
 
         if self._verbose:
-            sys.stdout.write('>>Fitting vector autoregressive processe\n')
+            sys.stdout.write('>>Fitting vector autoregressive process\n')
 
         W = np.eye(m)  # Can solve for A,b assuming latent process autoregression with W=I
 
@@ -110,6 +110,33 @@ class VAR(object):
         rmse =  np.sqrt(np.sum(np.square(X_pred-Xp))/X_pred.shape[1])
         return rmse
 
+    def predict_traj(self,times,X,T,dt=1):
+        """ Predicts an average expected continuation of a series given a specific series
+        
+        args:
+        -----
+        times : (numpy array (n,)) time points of the input series
+        X     : (numpy array (m,n)) time series to be continued
+        T     : (float) final time to stop the continuation
+
+        returns:
+        --------
+        times : (numpy array) of the continuation portion of the time series
+        X_pred : (numpy array) predicted continuation
+        X_lat_pred : (numpy array) predicted latent variables over the continuation
+        """
+
+        X = np.copy(X)
+        X -= self._means[:,np.newaxis]
+        init_times, X_init = extract_initial(times,X,self._r)
+        T_start = times[-1]
+        times, X_pred, X_lat_pred = _predict_traj(self._W, self._A, self._b, self._r, X_init,T,T_start,dt)
+
+        X_pred += self._means[:,np.newaxis]
+
+        return times, X_pred, X_lat_pred
+        
+
 class LPA(object):
     """
     Latent process analysis/autoregression. This is similar to vector autoregression for multivariate
@@ -159,7 +186,7 @@ class LPA(object):
         self._basis_opts = {}
 
         if basis == 'causal':
-            self._basis_opts['n_trials'] = int(basis_opts.get('n_trains', 10))
+            self._basis_opts['n_trials'] = int(basis_opts.get('n_trains', 50))
             self._basis_opts['max_iter'] = int(basis_opts.get('max_iter', 10000))
             self._basis_opts['kappa'] = float(basis_opts.get('kappa', 0.0))
 
@@ -195,7 +222,7 @@ class LPA(object):
         if self._verbose:
             sys.stdout.write('>>Extracting data from time series\n')
 
-        assert self._p*self._r < 10000, "The largest matrix inversion supported for the standard solver is 10000 x 10000."
+        assert self._p*self._r < 15000, "The largest matrix inversion supported for the standard solver is 15000 x 15000."
         "Please reduce the number of lags, or the number of components if possible"
         "Contact for additional solutions, such as distributed options, or conjugate solvers if desired."
 
@@ -256,13 +283,18 @@ class LPA(object):
             #dag_weights = 1./(self._p-np.arange(self._p))  # Create dag weights
             dag_weights = 1./(np.arange(self._p)+1)
             dag_weights = np.triu(np.tile(dag_weights[:,np.newaxis],[1,self._p]),1)
+            #dag_weights += np.tril(np.ones([self._p,self._p]),-1)/(self._p+1)
 
             # Solve for dag structure using the weights
-            err_cs, W_cs, A_cs, b_cs, loss_hist_cs = solve_dag(self._W_basis,self._A_basis, self._b_basis,
+            err_cs, O_cs, W_cs, A_cs, b_cs, loss_hist_cs = solve_dag(self._W_basis,self._A_basis, self._b_basis,
                                                                self._p,
                                                                dag_weights,kappa=kappa,n_trials=n_trials,
                                                                max_iter=max_iter,verbose=self._verbose)
 
+            if self._verbose:
+                sys.stdout.write('>>Extent of non-DAG structure: '+"{0:05f}".format(err_cs))
+
+            self._O_basis = O_cs
             self._W_basis = W_cs
             self._A_basis = A_cs
             self._b_basis = b_cs
@@ -274,6 +306,12 @@ class LPA(object):
     def get_model_params(self):
         assert self._is_fit, 'Need to fit model before accessing model parameters'
         return self._W_basis, star_to_s(self._A_basis,self._r,self._p,self._p), self._b_basis
+
+    def get_unstructured_model_params(self):
+        assert self._is_fit, 'Need to fit model before accessing model parameters'
+        assert self._store_unstructured, "Model must be allowed to store unstructured parameters to access them"
+        
+        return self._W, star_to_s(self._A,self._r,self._p,self._p), self._b
 
     def predict_latent(self,X):
         assert self._is_fit, "Model must be fit before predicting latent trajectories"
@@ -327,3 +365,29 @@ class LPA(object):
         X_pred, Xp = self.predict_future_step(X)
         rmse =  np.sqrt(np.sum(np.square(X_pred-Xp))/X_pred.shape[1])
         return rmse
+
+    def predict_traj(self,times,X,T,dt=1):
+        """ Predicts an average expected continuation of a series given a specific series
+        
+        args:
+        -----
+        times : (numpy array (n,)) time points of the input series
+        X     : (numpy array (m,n)) time series to be continued
+        T     : (float) final time to stop the continuation
+
+        returns:
+        --------
+        times : (numpy array) of the continuation portion of the time series
+        X_pred : (numpy array) predicted continuation
+        X_lat_pred : (numpy array) predicted latent variables over the continuation
+        """
+
+        X = np.copy(X)
+        X -= self._means[:,np.newaxis]
+        init_times, X_init = extract_initial(times,X,self._r)
+        T_start = times[-1]
+        times, X_pred, X_lat_pred = _predict_traj(self._W_basis, self._A_basis, self._b_basis, self._r, X_init,T,T_start,dt)
+
+        X_pred += self._means[:,np.newaxis]
+        
+        return times, X_pred, X_lat_pred

@@ -34,3 +34,25 @@ def extract_timeseries_XY(X,r,forward_backward):
         Xp = np.hstack([Xpf, Xpr])
 
     return Xr, Xp
+
+def extract_initial(times,X,r):
+    """
+    Extracts initial data point
+
+    args:
+    -----
+    X : (numpy array (m,n)) Time series to be extracted
+    p : (int) number of lags to be used in the model
+    forward_backward : (bool) Whether or not to extract the backward direction as well
+
+    returns:
+    Xr : (numpy array (r,m,n-r)) Time series predictors. Last dimension *2 if forward_backward
+    Xp : (numpy array (m,n-r) Time series labels. Last dimension *2 if forward_backward
+    """
+    n = X.shape[1]
+    n_train = n - r  # Compensate for lags
+
+    X_init = np.vstack([X[:,i-r][np.newaxis,:,np.newaxis] for i in range(r)])
+    new_times = times[-r:]
+
+    return new_times,X_init

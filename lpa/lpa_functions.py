@@ -223,7 +223,7 @@ def T_fun(W,Mr,Mp,lam,mu=0):
 
     Z_ast_var = np.vstack([W.T.dot(Mr[i]) for i in range(r)])
     Y_var = W.T.dot(Mp)
-    Gamma_var = I_m_Pi(Z_ast_var,Z_ast_var,n) + np.eye(r*p)*1e-6
+    Gamma_var = I_m_Pi(Z_ast_var,Z_ast_var,n) + np.eye(r*p)*1e-8
     V_var = I_m_Pi(Y_var,Z_ast_var,n)
     A_var = np.linalg.solve(Gamma_var,V_var.T).T
     
@@ -253,7 +253,7 @@ def T_err_fun(W,A,Mr,Mp):
     Y_var = W.T.dot(Mp)
     A_Z = A.dot(Z_ast_var)
     E_var = W.dot(right_I_m_proj(A_Z,n)+right_proj(Y_var,n)) - Mp
-    return np.sum(np.square(E_var))/n
+    return np.sqrt(np.sum(np.square(E_var))/n)
 
 def get_A_b(W,Mr,Mp,lam=0.0):
     """
@@ -281,7 +281,7 @@ def get_A_b(W,Mr,Mp,lam=0.0):
     Y_var = W.T.dot(Mp)
 
     # Get autocovariance
-    Gamma_var = I_m_Pi(Z_ast_var,Z_ast_var,n) + np.eye(r*p)*(lam+1e-6)
+    Gamma_var = I_m_Pi(Z_ast_var,Z_ast_var,n) + np.eye(r*p)*(lam+1e-8)
     V_var = I_m_Pi(Y_var,Z_ast_var,n)
 
     # Invert to get true values
@@ -386,7 +386,7 @@ def _predict_future_step(Xr,W,A,b):
     X_pred = W.dot(A.dot(Z_ast)+b[:,np.newaxis])
     return X_pred
 
-def predict_traj(W,A,b,r,M_init,T,T_start=-1,dt=1):
+def _predict_traj(W,A,b,r,M_init,T,T_start=-1,dt=1):
     """
     Predicts an error free trajectory using the latent process analaysis/autoregression model
     

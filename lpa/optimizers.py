@@ -5,6 +5,7 @@ from initializers import generate_W_init
 from lpa_functions import T_fun, T_err_fun, analytic_loss_grad, numerical_dag_loss_grad, get_A_b
 from lpa_functions import T_dag, T_dag_err, numerical_dag_loss_grad, analytic_dag_loss_grad
 from lpa_functions import analytic_loss_grad_fast
+from auxilary_functions import *
 
 def Y_tau(W,tau,A):
     g = W.shape[0]
@@ -112,7 +113,7 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,a
     p = W.shape[1]
     
     loss_hist = []
-    tau_hist = np.zeros([max_iter,])
+    tau_hist = np.zeros([max_iter+2,])
     
     f = T_fun(W,Mr,Mp,lam,mu)
     loss_hist.append(f)
@@ -149,14 +150,14 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,a
             G = np.reshape(G, [m,p])
                     
         # Determine initial tau using previous history
-        if i <= 5:
+        if i <= 10:
             tau_init = 1.0
         else:
             # Use median, but allow us to restore to larger values in case function curvature changes            
             if i % 10 == 0:
                 tau_init = 1.0
             else:
-                tau_init = np.max(tau_hist[i-5-1:i-1])
+                tau_init = np.max(tau_hist[i-10-1:i-1])
             
         # Find optimal step size and take the step
         f, Yt, d_tau, tau = armijo_wolfe_backtracking_line_search_woodbury(W,Mr,Mp,lam,mu,G,bool_woodbury,tau_init=tau_init,alpha=alpha)
@@ -198,7 +199,7 @@ def solve_one_numpy(W,Mr,Mp,lam,mu,max_iter=1000,bool_woodbury=True,bfgs=False,a
             G_old = G_new
             
         if (i % 100 == 0 or not bool_not_converged) and verbose:
-            sys.stdout.write('Iteration: '+str(i).rjust(6)+' | loss '+str(np.round(loss_hist[-1],3))+'\n')
+            sys.stdout.write('Iteration: '+str(i).rjust(6)+' | loss: '+str(np.round(loss_hist[-1],3))+'\n')
         i += 1
 
     A, b = get_A_b(W,Mr,Mp,lam)
@@ -231,12 +232,11 @@ def solve_lpa(Mr,Mp,lam,mu,p,n_trials=10,max_iter=100,bool_coordinate_wise=False
     
     return best_params
 
-def dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=True):
-    tau_init = 1
+def dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=True,tau_init=1.0,recurse=True):
     rho_1 = 1e-3
     rho_2 = 0.9
     
-    alpha = 0.7
+    alpha = 0.8
     
     tau = tau_init
     
@@ -268,18 +268,23 @@ def dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=True):
             
         tau *= alpha
         i += 1
+    
+    if i >= max_iter and recurse:
+        return dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=True,tau_init=1.0,recurse=False)
 
-    return f_tau, Yt, d_tau
+    return f_tau, Yt, d_tau, tau
 
 def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False,verbose=True):   
     r = A_s.shape[0]
     p = A_s.shape[1]
     loss_hist = []
+
+    tau_hist = np.zeros([max_iter+2,])
     
     f = T_dag(O,W,A_s,dag_weights,kappa)
     loss_hist.append(f)
 
-    min_eps = 1e-4
+    min_eps = 1e-5
     
     bool_not_converged = True
     i = 0
@@ -288,9 +293,23 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False
         f, G = analytic_dag_loss_grad(O,W,A_s,dag_weights,kappa)
     else:
         f, G = numerical_dag_loss_grad(O,W,A_s,dag_weights,kappa)
-        
+
     while bool_not_converged:    
-        f, Yt, d_tau = dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=False)
+        # Determine initial tau using previous history
+        if i <= 5:
+            tau_init = 1.0
+        else:
+            # Use median, but allow us to restore to larger values in case function curvature changes
+            if i % 10 == 0:
+                tau_init = 1.0
+            else:
+                tau_init = np.max(tau_hist[max(i-10-1,0):i-1])
+
+        f, Yt, d_tau, tau = dag_linesearch(O,W,A_s,dag_weights,kappa,G,bool_woodbury=False,tau_init=tau_init)
+
+        # Save the final tau determined through the method
+        tau_hist[i] = tau
+
         loss_hist.append(f/1e4)
         O_old = O
         O = Yt
@@ -305,17 +324,18 @@ def solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=1000,analytic=False
             f, G = numerical_dag_loss_grad(O,W,A_s,dag_weights,kappa)
             
         if (i % 100 == 0 or not bool_not_converged) and verbose:
-            sys.stdout.write('Iteration: '+str(i).rjust(6)+' | loss '+str(np.round(loss_hist[-1],3))+'\n')
+            sys.stdout.write('Iteration: '+str(i).rjust(6)+' | loss: '+str(np.round(loss_hist[-1],3))+'\n')
         i += 1
 
     W = W.dot(O.T)
     A_rot_s = np.matmul(np.matmul(O[np.newaxis,:,:],A_s), O.T[np.newaxis,:,:])
-    A = np.reshape(np.transpose(A_rot_s, [0,2,1]), [r*p,p]).T
+    A = s_to_star(A_rot_s,r,p,p)
+    #A = np.reshape(np.transpose(A_rot_s, [0,2,1]), [r*p,p]).T
     b = O.dot(b)
     
     err = T_dag_err(O,W,A_s,dag_weights)
     
-    return err, W, A, b, loss_hist
+    return err, O, W, A, b, loss_hist
 
 def solve_dag(W,A,b,p,dag_weights,kappa,n_trials=10,max_iter=10000,analytic=True,verbose=True):
     p = A.shape[0]
@@ -325,13 +345,16 @@ def solve_dag(W,A,b,p,dag_weights,kappa,n_trials=10,max_iter=10000,analytic=True
     best_params = None
     best_loss = 1e64
     for i in range(n_trials):
-        if verbose:
+        if verbose and i % 10 == 0:
             sys.stdout.write('>> Beginning seed: '+str(i)+'\n')
+            dag_verbose = True
+        else:
+            dag_verbose = False
         O = generate_W_init(p,p)
-        err, W, A, b, loss_hist = solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=max_iter,analytic=analytic,verbose=verbose)
+        err, O_basis, W_basis, A_basis, b_basis, loss_hist = solve_one_dag_numpy(O,W,A_s,b,dag_weights,kappa,max_iter=max_iter,analytic=analytic,verbose=dag_verbose)
 
         if loss_hist[-1] < best_loss:
             best_loss = loss_hist[-1]
-            best_params = (err, W, A, b, loss_hist)
+            best_params = (err, O_basis, W_basis, A_basis, b_basis, loss_hist)
     
     return best_params

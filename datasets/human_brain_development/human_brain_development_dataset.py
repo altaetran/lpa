@@ -1,4 +1,7 @@
-
+import csv
+import numpy as np
+import pandas
+import scipy
 
 def get_dataset():
     forebrain_file = '../datasets/human_brain_development/forebrain.tsv'
@@ -49,8 +52,6 @@ def get_dataset():
                             for i in range(expression_data.shape[0])]
     intr_expression_data = np.vstack(intr_expression_data)
 
-    X = np.log2(X)
-
     mean = np.mean(intr_expression_data, axis=1)
     intr_expression_ms = intr_expression_data - mean[:,np.newaxis]
     expression_ms = expression_data - mean[:,np.newaxis]
@@ -68,3 +69,16 @@ def get_dataset():
     expression_ms = expression_ms[alive_idx,:]
     gene_info_ms = [g for i,g in enumerate(gene_info) if alive_idx[i]]
 
+    return intr_time_points, intr_expression_ms, gene_info_ms, gene_info, raw_expression_data
+
+def get_gene_expression(gene,gene_info,gene_info_ms,intr_expression_ms,raw_expression_data):
+    i = [i for i in range(len(gene_info_ms)) if gene_info_ms[i][0]==gene][0]
+    j = [j for j in range(len(gene_info)) if gene_info[j][0]==gene][0]
+
+    return expression_ms[i,:], intr_expression_ms[i,:], raw_expression_data[j,:]
+
+def get_gene_expression_from_name(gene,gene_info_ms,intr_expression_ms,raw_expression_data):
+    i = [i for i in range(len(gene_info_ms)) if gene_info_ms[i][1]==gene][0]
+    j = [j for j in range(len(gene_info)) if gene_info[j][1]==gene][0]
+
+    return expression_ms[i,:], intr_expression_ms[i,:], raw_expression_data[j,:]
